@@ -1,0 +1,902 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>バックアップコスト試算ツール</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5;color:#1a1a1a;background:#f0f2f5}
+a{color:#2563eb;text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* Layout */
+.container{max-width:1200px;margin:0 auto;padding:20px}
+.card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:20px;margin-bottom:16px}
+.card h2{font-size:15px;font-weight:600;color:#0f172a;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.card h2 .badge{font-size:11px;font-weight:500;padding:2px 8px;border-radius:10px;background:#dbeafe;color:#1d4ed8}
+
+/* Header */
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px}
+header h1{font-size:20px;font-weight:700;color:#0f172a}
+.header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.save-badge{font-size:12px;padding:4px 10px;border-radius:20px;border:1px solid #e2e8f0;background:#f8fafc;color:#64748b}
+.save-badge.saved{background:#dcfce7;border-color:#bbf7d0;color:#166534}
+.save-badge.unsaved{background:#fef3c7;border-color:#fde68a;color:#92400e}
+.save-badge.imported{background:#e0f2fe;border-color:#bae6fd;color:#0369a1}
+
+/* Buttons */
+.btn{display:inline-flex;align-items:center;gap:5px;padding:7px 14px;border-radius:7px;border:1px solid #e2e8f0;background:#fff;cursor:pointer;font-size:13px;font-weight:500;color:#374151;transition:background .15s}
+.btn:hover{background:#f8fafc}
+.btn-primary{background:#2563eb;color:#fff;border-color:#2563eb}
+.btn-primary:hover{background:#1d4ed8}
+.btn-danger{color:#dc2626;border-color:#fecaca}
+.btn-danger:hover{background:#fef2f2}
+.btn-sm{padding:4px 10px;font-size:12px}
+.btn-icon{padding:5px 8px;font-size:14px}
+
+/* Items table */
+.items-table{width:100%;border-collapse:collapse}
+.items-table th{text-align:left;padding:8px 10px;background:#f8fafc;border-bottom:2px solid #e2e8f0;font-size:12px;font-weight:600;color:#475569;white-space:nowrap}
+.items-table td{padding:7px 8px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+.items-table tr:last-child td{border-bottom:none}
+.items-table tr:hover td{background:#fafafa}
+.items-table input[type=text],.items-table input[type=number],.items-table select{padding:5px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;background:#fff;width:100%;min-width:60px}
+.items-table input[type=text]{min-width:100px}
+.items-table input[type=number]{width:90px}
+.items-table .total-gb{font-size:13px;color:#475569;white-space:nowrap}
+
+/* Settings */
+.settings-row{display:flex;flex-wrap:wrap;gap:16px;align-items:center;margin-bottom:14px}
+.settings-item{display:flex;align-items:center;gap:8px;font-size:13px}
+.settings-item label{color:#374151;font-weight:500}
+.settings-item input[type=number]{width:80px;padding:5px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px}
+.service-toggles{display:flex;flex-wrap:wrap;gap:6px}
+.svc-toggle{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:20px;border:1px solid #e2e8f0;cursor:pointer;font-size:12px;color:#475569;user-select:none;transition:all .15s}
+.svc-toggle:hover{border-color:#93c5fd;background:#eff6ff}
+.svc-toggle.active{background:#dbeafe;border-color:#93c5fd;color:#1d4ed8}
+.svc-toggle input{display:none}
+
+/* Summary cards */
+.summary-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:18px}
+.summary-card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px;position:relative}
+.summary-card.cheapest{border-color:#86efac;background:#f0fdf4}
+.summary-card.cheapest::before{content:'最安';position:absolute;top:8px;right:8px;font-size:10px;background:#16a34a;color:#fff;padding:2px 6px;border-radius:10px}
+.scard-name{font-size:11px;color:#64748b;margin-bottom:4px;padding-right:28px}
+.scard-price{font-size:22px;font-weight:700;color:#0f172a}
+.scard-price span{font-size:12px;font-weight:400;color:#94a3b8}
+.scard-detail{font-size:11px;color:#94a3b8;margin-top:2px}
+.scard-link{font-size:11px;color:#2563eb;margin-top:4px;display:block}
+
+/* Chart */
+.chart-wrap{position:relative;width:100%;height:260px;margin-bottom:18px}
+
+/* Detail table */
+.detail-wrap{overflow-x:auto}
+.detail-table{width:100%;border-collapse:collapse;font-size:12px;min-width:400px}
+.detail-table th{padding:7px 10px;background:#f8fafc;border-bottom:2px solid #e2e8f0;font-weight:600;color:#475569;text-align:right;white-space:nowrap}
+.detail-table th:first-child{text-align:left}
+.detail-table td{padding:7px 10px;border-bottom:1px solid #f1f5f9;text-align:right;color:#374151}
+.detail-table td:first-child{text-align:left;font-weight:500;white-space:nowrap}
+.detail-table tr.cheapest-row td{background:#f0fdf4;color:#166534;font-weight:600}
+.detail-table .col-total{background:#f8fafc;font-weight:600}
+
+/* Service config table */
+.svc-table{width:100%;border-collapse:collapse;font-size:12px}
+.svc-table th{padding:7px 10px;background:#f8fafc;border-bottom:2px solid #e2e8f0;font-weight:600;color:#475569;text-align:left;white-space:nowrap}
+.svc-table td{padding:7px 10px;border-bottom:1px solid #f1f5f9;color:#374151;vertical-align:middle}
+.svc-table tr:last-child td{border-bottom:none}
+.svc-note{font-size:11px;color:#94a3b8;max-width:200px;word-break:break-word}
+.currency-badge{display:inline-block;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:500;background:#fef3c7;color:#92400e}
+.currency-badge.jpy{background:#dbeafe;color:#1e40af}
+
+/* Details accordion */
+details{background:#fff;border:1px solid #e2e8f0;border-radius:10px;margin-bottom:16px}
+summary{padding:16px 20px;cursor:pointer;font-size:15px;font-weight:600;color:#0f172a;list-style:none;display:flex;justify-content:space-between;align-items:center;user-select:none}
+summary::-webkit-details-marker{display:none}
+summary::after{content:'▼';font-size:11px;color:#94a3b8;transition:transform .2s}
+details[open] summary::after{transform:rotate(180deg)}
+.details-body{padding:0 20px 20px}
+
+/* Modal */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:1000}
+.modal-box{background:#fff;border-radius:12px;padding:24px;width:560px;max-width:95vw;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.2)}
+.modal-box h3{font-size:16px;font-weight:600;margin-bottom:16px;color:#0f172a}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.form-group{display:flex;flex-direction:column;gap:4px}
+.form-group.wide{grid-column:1/-1}
+.form-group label{font-size:12px;font-weight:500;color:#475569}
+.form-group input,.form-group select,.form-group textarea{padding:7px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;width:100%}
+.form-group input:focus,.form-group select:focus{outline:2px solid #bfdbfe;border-color:#93c5fd}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+.form-note{font-size:11px;color:#94a3b8;margin-top:2px}
+
+/* Utilities */
+.flex-gap{display:flex;align-items:center;gap:8px}
+.mt-12{margin-top:12px}
+.no-data{text-align:center;padding:30px;color:#94a3b8;font-size:13px}
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- Header -->
+<header>
+  <h1>📦 バックアップコスト試算ツール</h1>
+  <div class="header-actions">
+    <span id="save-status" class="save-badge unsaved">未保存</span>
+    <button class="btn btn-primary" onclick="saveState()">💾 保存</button>
+    <button class="btn" onclick="exportJSON()" title="JSONファイルとしてエクスポート">⬇ エクスポート</button>
+    <label class="btn" title="JSONファイルからインポート">
+      ⬆ インポート
+      <input type="file" accept=".json" onchange="importJSON(event)" style="display:none">
+    </label>
+    <button class="btn btn-sm" onclick="resetToDefaults()" title="デフォルト設定に戻す" style="color:#dc2626">↺ リセット</button>
+  </div>
+</header>
+
+<!-- Backup Items -->
+<div class="card">
+  <h2>🗂 バックアップ対象 <span class="badge" id="items-count">0 件</span></h2>
+  <div style="overflow-x:auto">
+    <table class="items-table">
+      <thead>
+        <tr>
+          <th>名称</th>
+          <th>ファイルサイズ (GB)</th>
+          <th>バックアップ頻度</th>
+          <th>保持世代数</th>
+          <th>月間アップロード (GB)</th>
+          <th>合計ストレージ (GB)</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="items-tbody"></tbody>
+    </table>
+  </div>
+  <div class="mt-12">
+    <button class="btn" onclick="addItem()">＋ バックアップ対象を追加</button>
+  </div>
+</div>
+
+<!-- Settings -->
+<div class="card">
+  <h2>⚙️ 設定</h2>
+  <div class="settings-row">
+    <div class="settings-item">
+      <label>為替レート: $1 =</label>
+      <input type="number" id="exchange-rate" value="150" min="1" max="999" step="1" onchange="onSettingsChange()">
+      <span>円</span>
+    </div>
+    <div class="settings-item" style="font-size:12px;color:#94a3b8">
+      ※ JPY建てサービスはレートに影響されません
+    </div>
+  </div>
+  <div style="font-size:12px;font-weight:500;color:#475569;margin-bottom:8px">表示するサービス</div>
+  <div id="service-toggles" class="service-toggles"></div>
+</div>
+
+<!-- Results -->
+<div class="card">
+  <h2>📊 試算結果 <span style="font-size:12px;font-weight:400;color:#94a3b8">（月額・税抜）</span></h2>
+  <div id="summary-cards" class="summary-grid"></div>
+  <div class="chart-wrap">
+    <canvas id="main-chart"></canvas>
+  </div>
+  <div class="detail-wrap">
+    <table class="detail-table" id="detail-table"></table>
+  </div>
+  <div id="no-data" class="no-data" style="display:none">
+    バックアップ対象を追加し、サービスを選択してください
+  </div>
+</div>
+
+<!-- Service Config (collapsible) -->
+<details id="svc-details">
+  <summary>🔧 ストレージサービス詳細設定</summary>
+  <div class="details-body">
+    <div style="overflow-x:auto">
+      <table class="svc-table">
+        <thead>
+          <tr>
+            <th>サービス名</th>
+            <th>通貨</th>
+            <th>保管(/GB/月)</th>
+            <th>DL(/GB)</th>
+            <th>無料DL(GB/月)</th>
+            <th>最低保管(日)</th>
+            <th>Drive世代管理</th>
+            <th>備考</th>
+            <th>公式URL</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="services-tbody"></tbody>
+      </table>
+    </div>
+    <div class="mt-12">
+      <button class="btn" onclick="addService()">＋ サービスを追加</button>
+    </div>
+    <p style="font-size:11px;color:#94a3b8;margin-top:10px">
+      ※ 保管・DLコストは「通貨」列の単位で入力してください（USD: ドル / JPY: 円）
+    </p>
+  </div>
+</details>
+
+</div><!-- /container -->
+
+<!-- Service Edit Modal -->
+<div id="modal" class="modal-bg" style="display:none" onclick="onModalBgClick(event)">
+  <div class="modal-box">
+    <h3 id="modal-title">サービス設定</h3>
+    <div class="form-grid" id="modal-form"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">キャンセル</button>
+      <button class="btn btn-primary" onclick="saveModal()">保存</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+// =============================================
+// Default data
+// =============================================
+const STORAGE_KEY = 'backup_cost_v2';
+
+const FREQUENCIES = [
+  { id: 'hourly',       label: '毎時',    monthly: 720 },
+  { id: 'twice_daily',  label: '1日2回',  monthly: 60 },
+  { id: 'daily',        label: '毎日',    monthly: 30 },
+  { id: 'twice_weekly', label: '週2回',   monthly: 9 },
+  { id: 'weekly',       label: '週1回',   monthly: 4 },
+];
+
+const DEFAULT_SERVICES = [
+  {
+    id: 'b2', name: 'Backblaze B2',
+    currency: 'usd', storagePerGB: 0.006, uploadPerGB: 0, downloadPerGB: 0.01,
+    freeDownloadGB: 30, minStorageDays: 0,
+    supportsVersioning: false, useServiceVersioning: false,
+    note: '最安クラス。DL 1GB/日まで無料',
+    url: 'https://www.backblaze.com/cloud-storage/pricing', enabled: true
+  },
+  {
+    id: 'wasabi', name: 'Wasabi',
+    currency: 'usd', storagePerGB: 0.0069, uploadPerGB: 0, downloadPerGB: 0,
+    freeDownloadGB: 9999, minStorageDays: 90,
+    supportsVersioning: false, useServiceVersioning: false,
+    note: 'DL完全無料。90日最低保管に注意',
+    url: 'https://wasabi.com/cloud-storage-pricing/', enabled: true
+  },
+  {
+    id: 's3', name: 'AWS S3 Standard',
+    currency: 'usd', storagePerGB: 0.023, uploadPerGB: 0, downloadPerGB: 0.09,
+    freeDownloadGB: 0, minStorageDays: 0,
+    supportsVersioning: false, useServiceVersioning: false,
+    note: '高信頼性。PUT/GETリクエスト課金あり',
+    url: 'https://aws.amazon.com/s3/pricing/', enabled: true
+  },
+  {
+    id: 'idrive', name: 'IDrive e2',
+    currency: 'usd', storagePerGB: 0.004, uploadPerGB: 0, downloadPerGB: 0.004,
+    freeDownloadGB: 0, minStorageDays: 0,
+    supportsVersioning: false, useServiceVersioning: false,
+    note: '超低コスト。S3互換API',
+    url: 'https://www.idrive.com/object-storage-e2/', enabled: true
+  },
+  {
+    id: 'azure', name: 'Azure Blob (Cool)',
+    currency: 'usd', storagePerGB: 0.01, uploadPerGB: 0, downloadPerGB: 0.01,
+    freeDownloadGB: 0, minStorageDays: 0,
+    supportsVersioning: false, useServiceVersioning: false,
+    note: 'Azureエコシステム向け',
+    url: 'https://azure.microsoft.com/ja-jp/pricing/details/storage/blobs/', enabled: true
+  },
+  {
+    id: 'gcs', name: 'GCS Nearline',
+    currency: 'usd', storagePerGB: 0.010, uploadPerGB: 0, downloadPerGB: 0.01,
+    freeDownloadGB: 0, minStorageDays: 0,
+    supportsVersioning: false, useServiceVersioning: false,
+    note: 'GCPエコシステム向け。月1回以下のアクセス向け',
+    url: 'https://cloud.google.com/storage/pricing', enabled: false
+  },
+  {
+    id: 'sakura', name: 'さくら オブジェクトストレージ',
+    currency: 'jpy', storagePerGB: 2.2, uploadPerGB: 0, downloadPerGB: 20,
+    freeDownloadGB: 0, minStorageDays: 0,
+    supportsVersioning: false, useServiceVersioning: false,
+    note: '円建て・国内データセンター。為替リスクゼロ',
+    url: 'https://cloud.sakura.ad.jp/specification/object-storage/', enabled: true
+  },
+  {
+    id: 'gdrive', name: 'Google Drive (Google One)',
+    currency: 'jpy', storagePerGB: 0.63, uploadPerGB: 0, downloadPerGB: 0,
+    freeDownloadGB: 9999, minStorageDays: 0,
+    supportsVersioning: true, useServiceVersioning: false,
+    note: '月額プラン換算(2TB基準)。S3非互換・rclone経由。Drive側バージョン管理対応',
+    url: 'https://one.google.com/about/plans?hl=ja', enabled: false
+  },
+  {
+    id: 'gworkspace', name: 'Google Workspace',
+    currency: 'jpy', storagePerGB: 0.75, uploadPerGB: 0, downloadPerGB: 0,
+    freeDownloadGB: 9999, minStorageDays: 0,
+    supportsVersioning: true, useServiceVersioning: false,
+    note: 'Business Standard換算(2TB/ユーザー)。共有ドライブ・バージョン管理対応',
+    url: 'https://workspace.google.com/intl/ja/pricing/', enabled: false
+  },
+];
+
+const DEFAULT_ITEMS = [
+  { id: 'item_1', name: 'DBバックアップ', fileSizeGB: 2, frequency: 'daily', generations: 30 },
+];
+
+// =============================================
+// State
+// =============================================
+let state = {
+  items: JSON.parse(JSON.stringify(DEFAULT_ITEMS)),
+  settings: {
+    exchangeRate: 150,
+    services: JSON.parse(JSON.stringify(DEFAULT_SERVICES))
+  }
+};
+
+let chartInstance = null;
+let editingServiceId = null;
+
+// =============================================
+// Utilities
+// =============================================
+function esc(str) {
+  const d = document.createElement('div');
+  d.textContent = String(str ?? '');
+  return d.innerHTML;
+}
+function uid() {
+  return 'id_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+}
+function getFreq(id) {
+  return FREQUENCIES.find(f => f.id === id) ?? FREQUENCIES[2];
+}
+function toJPY(amount, currency) {
+  const rate = state.settings.exchangeRate || 150;
+  return currency === 'jpy' ? amount : amount * rate;
+}
+function fmtJPY(n) {
+  return '¥' + Math.round(n).toLocaleString();
+}
+
+// =============================================
+// Calculation
+// =============================================
+function calcItemCost(item, svc) {
+  const monthlyUploadGB = item.fileSizeGB * getFreq(item.frequency).monthly;
+  const uploadCost = toJPY(monthlyUploadGB * svc.uploadPerGB, svc.currency);
+
+  let storageCost;
+  if (svc.useServiceVersioning && svc.supportsVersioning) {
+    // サービス側世代管理: Drive が自動バージョン管理するため、
+    // ストレージは「最新1世代分 × 1.2（バージョン分のバッファ）」で近似計算
+    // 実際の課金は Drive 側のプラン料金に含まれる
+    storageCost = toJPY(item.fileSizeGB * 1.2 * svc.storagePerGB, svc.currency);
+  } else {
+    const totalStorageGB = item.fileSizeGB * item.generations;
+    storageCost = toJPY(totalStorageGB * svc.storagePerGB, svc.currency);
+  }
+
+  return storageCost + uploadCost;
+}
+
+function calcTotalCost(svc) {
+  return state.items.reduce((sum, item) => sum + calcItemCost(item, svc), 0);
+}
+
+function calcMonthlyUploadGB(item) {
+  return item.fileSizeGB * getFreq(item.frequency).monthly;
+}
+
+function calcTotalStorageGB(item, svc) {
+  if (svc && svc.useServiceVersioning && svc.supportsVersioning) {
+    return item.fileSizeGB * 1.2;
+  }
+  return item.fileSizeGB * item.generations;
+}
+
+// =============================================
+// Render: Items
+// =============================================
+function renderItems() {
+  const tbody = document.getElementById('items-tbody');
+  const count = state.items.length;
+
+  document.getElementById('items-count').textContent = count + ' 件';
+
+  if (count === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" class="no-data">バックアップ対象がありません</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = state.items.map(item => {
+    const freqOpts = FREQUENCIES.map(f =>
+      `<option value="${f.id}" ${item.frequency === f.id ? 'selected' : ''}>${f.label}</option>`
+    ).join('');
+
+    const uploadGB = calcMonthlyUploadGB(item).toFixed(1);
+    const totalGB = calcTotalStorageGB(item).toFixed(1);
+
+    return `<tr>
+      <td><input type="text" value="${esc(item.name)}" onchange="updateItem('${item.id}','name',this.value)" style="min-width:120px"></td>
+      <td><input type="number" value="${item.fileSizeGB}" min="0.01" step="0.1" onchange="updateItem('${item.id}','fileSizeGB',parseFloat(this.value)||0.1)"></td>
+      <td><select onchange="updateItem('${item.id}','frequency',this.value)">${freqOpts}</select></td>
+      <td><input type="number" value="${item.generations}" min="1" step="1" onchange="updateItem('${item.id}','generations',parseInt(this.value)||1)"></td>
+      <td><span class="total-gb">${uploadGB} GB</span></td>
+      <td><span class="total-gb">${totalGB} GB</span></td>
+      <td><button class="btn btn-sm btn-danger btn-icon" onclick="deleteItem('${item.id}')" title="削除">✕</button></td>
+    </tr>`;
+  }).join('');
+}
+
+// =============================================
+// Render: Service Toggles
+// =============================================
+function renderServiceToggles() {
+  const container = document.getElementById('service-toggles');
+  container.innerHTML = state.settings.services.map(svc =>
+    `<label class="svc-toggle ${svc.enabled ? 'active' : ''}" id="toggle_${svc.id}">
+      <input type="checkbox" ${svc.enabled ? 'checked' : ''} onchange="toggleService('${svc.id}',this.checked)">
+      ${esc(svc.name)}
+    </label>`
+  ).join('');
+}
+
+// =============================================
+// Render: Services Table
+// =============================================
+function renderServicesTable() {
+  const tbody = document.getElementById('services-tbody');
+  tbody.innerHTML = state.settings.services.map(svc => {
+    const currClass = svc.currency === 'jpy' ? 'jpy' : '';
+    const currSymbol = svc.currency === 'usd' ? '$' : '¥';
+    const dlFree = svc.freeDownloadGB >= 9999 ? '無制限' : svc.freeDownloadGB;
+    const minDays = svc.minStorageDays > 0 ? `<span style="color:#dc2626">${svc.minStorageDays}日</span>` : '−';
+    let verCell;
+    if (!svc.supportsVersioning) {
+      verCell = '<span style="color:#cbd5e1">非対応</span>';
+    } else if (svc.useServiceVersioning) {
+      verCell = `<label style="cursor:pointer;display:flex;align-items:center;gap:4px">
+        <input type="checkbox" checked onchange="toggleServiceVersioning('${svc.id}',this.checked)">
+        <span style="font-size:11px;color:#1d4ed8">有効</span>
+      </label>`;
+    } else {
+      verCell = `<label style="cursor:pointer;display:flex;align-items:center;gap:4px">
+        <input type="checkbox" onchange="toggleServiceVersioning('${svc.id}',this.checked)">
+        <span style="font-size:11px;color:#94a3b8">無効</span>
+      </label>`;
+    }
+    return `<tr>
+      <td style="font-weight:500">${esc(svc.name)}</td>
+      <td><span class="currency-badge ${currClass}">${svc.currency.toUpperCase()}</span></td>
+      <td>${currSymbol}${svc.storagePerGB}</td>
+      <td>${currSymbol}${svc.downloadPerGB}</td>
+      <td>${dlFree}</td>
+      <td>${minDays}</td>
+      <td>${verCell}</td>
+      <td><span class="svc-note">${esc(svc.note)}</span></td>
+      <td>${svc.url ? `<a href="${esc(svc.url)}" target="_blank" rel="noopener">公式 ↗</a>` : '−'}</td>
+      <td>
+        <div class="flex-gap">
+          <button class="btn btn-sm" onclick="editService('${svc.id}')">編集</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteService('${svc.id}')">削除</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// =============================================
+// Render: Results
+// =============================================
+function renderResults() {
+  const enabledServices = state.settings.services.filter(s => s.enabled);
+  const hasItems = state.items.length > 0;
+  const hasServices = enabledServices.length > 0;
+
+  document.getElementById('no-data').style.display = (!hasItems || !hasServices) ? 'block' : 'none';
+
+  if (!hasItems || !hasServices) {
+    document.getElementById('summary-cards').innerHTML = '';
+    document.getElementById('detail-table').innerHTML = '';
+    if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+    return;
+  }
+
+  const costs = enabledServices.map(svc => ({
+    svc,
+    total: calcTotalCost(svc),
+    itemCosts: state.items.map(item => calcItemCost(item, svc))
+  }));
+
+  const minTotal = Math.min(...costs.map(c => c.total));
+
+  // Summary cards
+  document.getElementById('summary-cards').innerHTML = costs.map(({ svc, total }) => {
+    const isMin = Math.abs(total - minTotal) < 0.5;
+    const storageGB = state.items.reduce((s, item) => s + calcTotalStorageGB(item, svc), 0);
+    const perGBApprox = storageGB > 0 ? (total / storageGB).toFixed(2) : '−';
+    const verBadge = (svc.supportsVersioning && svc.useServiceVersioning)
+      ? `<span style="font-size:10px;background:#dbeafe;color:#1d4ed8;padding:1px 5px;border-radius:8px;margin-left:4px">Drive世代管理</span>` : '';
+    return `<div class="summary-card ${isMin ? 'cheapest' : ''}">
+      <div class="scard-name">${esc(svc.name)}${verBadge}</div>
+      <div class="scard-price">${fmtJPY(total)}<span>/月</span></div>
+      <div class="scard-detail">実効: ¥${perGBApprox}/GB${(svc.supportsVersioning && svc.useServiceVersioning) ? '（Drive管理）' : ''}</div>
+      ${svc.url ? `<a href="${esc(svc.url)}" target="_blank" rel="noopener" class="scard-link">公式サイト ↗</a>` : ''}
+    </div>`;
+  }).join('');
+
+  // Chart
+  renderChart(costs);
+
+  // Detail table
+  const headCols = state.items.map(item =>
+    `<th>${esc(item.name)}<br><span style="font-weight:400;color:#94a3b8">${calcTotalStorageGB(item).toFixed(1)}GB</span></th>`
+  ).join('');
+
+  const rows = costs.map(({ svc, total, itemCosts }) => {
+    const isMin = Math.abs(total - minTotal) < 0.5;
+    const cells = itemCosts.map(c => `<td>${fmtJPY(c)}</td>`).join('');
+    const warn = svc.minStorageDays > 0 ? `<span title="${svc.minStorageDays}日最低保管あり" style="cursor:help">⚠️</span>` : '';
+    const verIcon = (svc.supportsVersioning && svc.useServiceVersioning) ? `<span title="Drive側世代管理を使用（ストレージは最新×1.2で近似）" style="cursor:help">🔄</span>` : '';
+    return `<tr ${isMin ? 'class="cheapest-row"' : ''}>
+      <td>${esc(svc.name)}${warn}${verIcon}</td>
+      ${cells}
+      <td class="col-total">${fmtJPY(total)}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('detail-table').innerHTML = `
+    <thead><tr>
+      <th>サービス</th>
+      ${headCols}
+      <th class="col-total">合計/月</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>`;
+}
+
+// =============================================
+// Render: Chart
+// =============================================
+const CHART_COLORS = [
+  '#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6',
+  '#06b6d4','#ec4899','#84cc16','#f97316','#6366f1'
+];
+
+function renderChart(costs) {
+  const canvas = document.getElementById('main-chart');
+  if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+
+  if (costs.length === 0) return;
+
+  chartInstance = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels: costs.map(c => c.svc.name),
+      datasets: [{
+        label: '月額コスト (¥)',
+        data: costs.map(c => Math.round(c.total)),
+        backgroundColor: CHART_COLORS.map(c => c + 'cc'),
+        borderColor: CHART_COLORS,
+        borderWidth: 1,
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => `¥${ctx.raw.toLocaleString()}/月`,
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { maxRotation: 30, font: { size: 11 } } },
+        y: {
+          beginAtZero: true,
+          ticks: {
+            callback: v => '¥' + v.toLocaleString(),
+            font: { size: 11 }
+          }
+        }
+      }
+    }
+  });
+}
+
+// =============================================
+// Render all
+// =============================================
+function renderAll() {
+  renderItems();
+  renderServiceToggles();
+  renderServicesTable();
+  renderResults();
+}
+
+// =============================================
+// CRUD: Items
+// =============================================
+function addItem() {
+  state.items.push({
+    id: uid(),
+    name: 'バックアップ対象 ' + (state.items.length + 1),
+    fileSizeGB: 1,
+    frequency: 'daily',
+    generations: 30
+  });
+  markUnsaved();
+  renderAll();
+}
+
+function deleteItem(id) {
+  state.items = state.items.filter(i => i.id !== id);
+  markUnsaved();
+  renderAll();
+}
+
+function updateItem(id, field, value) {
+  const item = state.items.find(i => i.id === id);
+  if (!item) return;
+  item[field] = value;
+  markUnsaved();
+  renderItems();
+  renderResults();
+}
+
+// =============================================
+// CRUD: Services
+// =============================================
+function toggleService(id, enabled) {
+  const svc = state.settings.services.find(s => s.id === id);
+  if (!svc) return;
+  svc.enabled = enabled;
+  const toggle = document.getElementById('toggle_' + id);
+  if (toggle) toggle.classList.toggle('active', enabled);
+  markUnsaved();
+  renderResults();
+}
+
+function toggleServiceVersioning(id, enabled) {
+  const svc = state.settings.services.find(s => s.id === id);
+  if (!svc || !svc.supportsVersioning) return;
+  svc.useServiceVersioning = enabled;
+  markUnsaved();
+  renderServicesTable();
+  renderResults();
+}
+
+function addService() {
+  const id = 'custom_' + Date.now();
+  state.settings.services.push({
+    id, name: '新しいサービス', currency: 'usd',
+    storagePerGB: 0, uploadPerGB: 0, downloadPerGB: 0,
+    freeDownloadGB: 0, minStorageDays: 0,
+    supportsVersioning: false, useServiceVersioning: false,
+    note: '', url: '', enabled: true
+  });
+  markUnsaved();
+  renderServicesTable();
+  renderServiceToggles();
+  editService(id);
+}
+
+function deleteService(id) {
+  if (!confirm('このサービスを削除しますか？')) return;
+  state.settings.services = state.settings.services.filter(s => s.id !== id);
+  markUnsaved();
+  renderServicesTable();
+  renderServiceToggles();
+  renderResults();
+}
+
+function editService(id) {
+  const svc = state.settings.services.find(s => s.id === id);
+  if (!svc) return;
+  editingServiceId = id;
+  document.getElementById('modal-title').textContent = 'サービス設定: ' + svc.name;
+  const dlFreeVal = svc.freeDownloadGB >= 9999 ? 9999 : svc.freeDownloadGB;
+  document.getElementById('modal-form').innerHTML = `
+    <div class="form-group wide">
+      <label>サービス名</label>
+      <input type="text" id="f-name" value="${esc(svc.name)}">
+    </div>
+    <div class="form-group">
+      <label>通貨</label>
+      <select id="f-currency">
+        <option value="usd" ${svc.currency==='usd'?'selected':''}>USD（ドル）</option>
+        <option value="jpy" ${svc.currency==='jpy'?'selected':''}>JPY（円）</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>最低保管日数</label>
+      <input type="number" id="f-mindays" value="${svc.minStorageDays}" min="0" step="1">
+      <span class="form-note">例: Wasabiは90。0=制限なし</span>
+    </div>
+    <div class="form-group">
+      <label>保管コスト（GB/月）</label>
+      <input type="number" id="f-storage" value="${svc.storagePerGB}" min="0" step="0.0001">
+    </div>
+    <div class="form-group">
+      <label>アップロードコスト（GB）</label>
+      <input type="number" id="f-upload" value="${svc.uploadPerGB}" min="0" step="0.0001">
+    </div>
+    <div class="form-group">
+      <label>ダウンロードコスト（GB）</label>
+      <input type="number" id="f-download" value="${svc.downloadPerGB}" min="0" step="0.0001">
+    </div>
+    <div class="form-group">
+      <label>無料DL（GB/月、9999=無制限）</label>
+      <input type="number" id="f-freedl" value="${dlFreeVal}" min="0" step="1">
+    </div>
+    <div class="form-group wide">
+      <label>公式URL</label>
+      <input type="url" id="f-url" value="${esc(svc.url)}">
+    </div>
+    <div class="form-group wide">
+      <label>備考・メモ</label>
+      <input type="text" id="f-note" value="${esc(svc.note)}">
+    </div>
+    <div class="form-group wide" style="background:#f0f9ff;border-radius:8px;padding:12px;border:1px solid #bae6fd">
+      <label style="font-size:13px;font-weight:600;color:#0369a1">サービス側世代管理（Google Drive / Workspace専用）</label>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="f-supports-versioning" ${svc.supportsVersioning?'checked':''}>
+          Drive側バージョン管理に対応している（gdrive / gworkspace のみ）
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px" id="f-use-ver-wrap">
+          <input type="checkbox" id="f-use-versioning" ${svc.useServiceVersioning?'checked':''} ${!svc.supportsVersioning?'disabled':''}>
+          Drive側世代管理を使用する（有効時: ストレージは最新×1.2で近似計算）
+        </label>
+      </div>
+      <p class="form-note" style="margin-top:6px">有効にすると、シェル側では世代削除をスキップしDrive側のバージョン履歴に委ねます。<br>Driveは最大100バージョン保持。容量上限に達すると古いバージョンが自動削除されます。</p>
+    </div>`;
+  document.getElementById('f-supports-versioning').addEventListener('change', function() {
+    const useEl = document.getElementById('f-use-versioning');
+    useEl.disabled = !this.checked;
+    if (!this.checked) useEl.checked = false;
+  });
+  document.getElementById('modal').style.display = 'flex';
+}
+
+function saveModal() {
+  if (!editingServiceId) return;
+  const svc = state.settings.services.find(s => s.id === editingServiceId);
+  if (!svc) return;
+  svc.name        = document.getElementById('f-name').value.trim() || 'サービス';
+  svc.currency    = document.getElementById('f-currency').value;
+  svc.storagePerGB  = parseFloat(document.getElementById('f-storage').value) || 0;
+  svc.uploadPerGB   = parseFloat(document.getElementById('f-upload').value) || 0;
+  svc.downloadPerGB = parseFloat(document.getElementById('f-download').value) || 0;
+  svc.freeDownloadGB = parseInt(document.getElementById('f-freedl').value) || 0;
+  svc.minStorageDays = parseInt(document.getElementById('f-mindays').value) || 0;
+  svc.url  = document.getElementById('f-url').value.trim();
+  svc.note = document.getElementById('f-note').value.trim();
+  svc.supportsVersioning  = document.getElementById('f-supports-versioning').checked;
+  svc.useServiceVersioning = document.getElementById('f-use-versioning').checked;
+  if (!svc.supportsVersioning) svc.useServiceVersioning = false;
+  closeModal();
+  markUnsaved();
+  renderAll();
+}
+
+function closeModal() {
+  document.getElementById('modal').style.display = 'none';
+  editingServiceId = null;
+}
+
+function onModalBgClick(e) {
+  if (e.target === document.getElementById('modal')) closeModal();
+}
+
+// =============================================
+// Settings
+// =============================================
+function onSettingsChange() {
+  state.settings.exchangeRate = parseInt(document.getElementById('exchange-rate').value) || 150;
+  markUnsaved();
+  renderResults();
+}
+
+// =============================================
+// Save / Export / Import
+// =============================================
+function markUnsaved() {
+  const el = document.getElementById('save-status');
+  el.textContent = '未保存';
+  el.className = 'save-badge unsaved';
+}
+
+function saveState() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    const el = document.getElementById('save-status');
+    el.textContent = '保存済み';
+    el.className = 'save-badge saved';
+  } catch(e) {
+    alert('保存に失敗しました: ' + e.message);
+  }
+}
+
+function exportJSON() {
+  const json = JSON.stringify(state, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'backup-cost-' + new Date().toISOString().slice(0, 10) + '.json';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importJSON(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const imported = JSON.parse(e.target.result);
+      if (!imported.items || !imported.settings) {
+        alert('有効なバックアップコスト設定ファイルではありません。');
+        return;
+      }
+      state = imported;
+      document.getElementById('exchange-rate').value = state.settings.exchangeRate;
+      const el = document.getElementById('save-status');
+      el.textContent = 'インポート済み（未保存）';
+      el.className = 'save-badge imported';
+      renderAll();
+    } catch(err) {
+      alert('JSONの解析に失敗しました: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+  event.target.value = '';
+}
+
+function resetToDefaults() {
+  if (!confirm('デフォルト設定に戻しますか？（現在の設定は失われます）')) return;
+  state = {
+    items: JSON.parse(JSON.stringify(DEFAULT_ITEMS)),
+    settings: { exchangeRate: 150, services: JSON.parse(JSON.stringify(DEFAULT_SERVICES)) }
+  };
+  document.getElementById('exchange-rate').value = 150;
+  markUnsaved();
+  renderAll();
+}
+
+// =============================================
+// Init
+// =============================================
+function init() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed.items && parsed.settings) {
+        state = parsed;
+        document.getElementById('exchange-rate').value = state.settings.exchangeRate;
+        const el = document.getElementById('save-status');
+        el.textContent = '保存済み';
+        el.className = 'save-badge saved';
+      }
+    }
+  } catch(e) { /* use defaults */ }
+  renderAll();
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>

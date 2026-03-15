@@ -1,0 +1,19 @@
+-- MySQL データマスク サンプルSQL
+-- 使い方: 
+-- 1. このファイルをコピーして必要に応じて編集してください (例: scripts/mask_data.sql)
+-- 2. config.env で MASK_SQL_FILE="scripts/mask_data.sql" を指定します
+-- 3. restore.sh 実行時に --mask-sql オプションを使用するか、インタラクティブモードで有効にします
+
+-- 例: users テーブルのメールアドレスをマスクする
+-- tulistjp@sample.com -> h.moriyama+tulistjp_gmail_com@example.com 形式に変換
+UPDATE users 
+SET email = CONCAT('h.moriyama+', REPLACE(REPLACE(email, '@', '_'), '.', '_'), '@example.com')
+WHERE email IS NOT NULL AND email LIKE '%@%';
+
+-- 例: profiles テーブルの電話番号をダミーデータに置き換える
+-- UPDATE profiles SET phone_number = '000-0000-0000';
+
+-- 例: password を一律で特定のハッシュ値（例: 'password'）に変更する
+-- UPDATE users SET password = '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi';
+
+-- その他、開発環境で不要な個人情報（住所、氏名など）を固定値にする処理をここに記述します
