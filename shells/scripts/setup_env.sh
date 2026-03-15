@@ -170,6 +170,13 @@ WEBHOOK_URL=$WEBHOOK_URL
 # ----- テストDBリストアチェック -----
 # バックアップが正しくリストアできるか定期的に検証するためのDB
 TEST_DB_NAME=${SERVICE_NAME}_test
+
+# テストDBの接続情報 (指定しない場合は本番DBと同じ設定を使用します)
+TEST_DB_HOST=
+TEST_DB_PORT=
+TEST_DB_USER=
+TEST_DB_PASS=
+
 CRON_TEST_RESTORE="0 5 * * *"     # テストリストア実行（毎日 5:00）
 
 # ----- ログ設定 -----

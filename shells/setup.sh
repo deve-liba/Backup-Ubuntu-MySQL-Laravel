@@ -72,13 +72,8 @@ step "設定ファイルセキュリティチェック"
 if [[ "$(stat -c '%a' "$CONFIG_FILE" 2>/dev/null || echo "000")" != "600" ]]; then
   warn "$CONFIG_FILE のパーミッションが 600 ではありません（推奨: 600）"
   warn "機密情報（パスワード等）が含まれているため、パーミッションの変更を推奨します。"
-  read -p "パーミッションを 600 に変更しますか？ (y/n): " confirm
-  if [[ "$confirm" == "y" ]]; then
-    chmod 600 "$CONFIG_FILE"
-    info "パーミッションを 600 に変更しました。"
-  fi
-else
-  info "設定ファイルのパーミッション: 600 (OK)"
+  # 完了時に案内するためにフラグを立てる
+  SET_CHMOD_600=true
 fi
 
 echo -e "\n${BOLD}========================================${NC}"
@@ -241,20 +236,7 @@ fi
 
 # ---- MySQL バックアップユーザー案内 ----
 step "MySQL バックアップユーザー設定"
-info "以下のSQLをMySQLで実行して、バックアップおよびリストアに必要な権限を持つユーザーを作成してください:"
-echo ""
-echo "  CREATE USER '${DB_USER}'@'%' IDENTIFIED BY '${DB_PASS}';"
-echo "  -- バックアップに必要なグローバル権限"
-echo "  GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION CLIENT, SHOW VIEW, EVENT, TRIGGER ON *.* TO '${DB_USER}'@'%';"
-echo "  -- リストアに必要な対象DBへの権限 (DROP, CREATE 等)"
-echo "  GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'%';"
-if [[ -n "${TEST_DB_NAME:-}" ]]; then
-  echo "  GRANT ALL PRIVILEGES ON \`${TEST_DB_NAME}\`.* TO '${DB_USER}'@'%';"
-fi
-echo "  FLUSH PRIVILEGES;"
-echo ""
-echo "注: Docker環境やリモートDBの場合は '@'localhost' ではなく '@'%' または特定のIPを指定してください。"
-echo ""
+info "権限設定の案内はセットアップ完了後にまとめて表示します。"
 
 # バイナリログチェック
 BIN_LOG=$(mysql -h "${DB_HOST}" -P "${DB_PORT:-3306}" -u "${DB_USER}" -p"${DB_PASS}" \
@@ -263,10 +245,7 @@ BIN_LOG=$(mysql -h "${DB_HOST}" -P "${DB_PORT:-3306}" -u "${DB_USER}" -p"${DB_PA
 if [[ "$BIN_LOG" == "ON" ]]; then
   info "バイナリログ: 有効（PITRが利用可能）"
 else
-  warn "バイナリログが無効です。PITRを有効にするには mysqld.cnf に以下を追記してください:"
-  echo "  log_bin = /var/log/mysql/mysql-bin.log"
-  echo "  expire_logs_days = 7"
-  echo "  binlog_format = ROW"
+  warn "バイナリログが無効です。有効にする手順はセットアップ完了後に表示します。"
 fi
 
 # ---- Cron 設定 ----
@@ -302,15 +281,7 @@ EOF
   fi
 else
   warn "/etc/cron.d が見つかりません。Cron ジョブの自動設定をスキップしました。"
-  info "Docker環境などの場合は、ホスト側または別のコンテナで以下の設定を検討してください:"
-  echo "------------------------------------------------------------"
-  echo "# MySQL バックアップ"
-  echo "${CRON_MYSQL} ${SCRIPT_DIR}/scripts/backup_mysql.sh ${CONFIG_FILE}"
-  echo "# ファイル バックアップ"
-  echo "${CRON_FILES} ${SCRIPT_DIR}/scripts/backup_files.sh ${CONFIG_FILE}"
-  echo "# クラウド 同期"
-  echo "${CRON_SYNC} ${SCRIPT_DIR}/scripts/backup_sync.sh ${CONFIG_FILE}"
-  echo "------------------------------------------------------------"
+  info "手動設定の詳細はセットアップ完了後に表示します。"
 fi
 
 # ---- Logrotate 設定 ----
@@ -341,6 +312,68 @@ echo -e "${BOLD}========================================${NC}"
 echo -e "${GREEN}  セットアップ完了${NC}"
 echo -e "${BOLD}========================================${NC}"
 echo ""
+
+# 手動対応が必要な事項のまとめ
+MANUAL_TASKS=()
+
+# 設定ファイルのパーミッション
+if [[ "${SET_CHMOD_600:-false}" == "true" ]]; then
+  MANUAL_TASKS+=("1. 設定ファイルのセキュリティ設定")
+  MANUAL_TASKS+=("   機密情報保護のため、config.env のパーミッションを 600 に変更してください。")
+  MANUAL_TASKS+=("   chmod 600 ${CONFIG_FILE}")
+  MANUAL_TASKS+=("")
+fi
+
+# MySQL ユーザー権限
+MANUAL_TASKS+=("2. MySQL バックアップユーザー権限設定")
+MANUAL_TASKS+=("   以下のSQLをMySQLで実行して、権限を持つユーザーを作成してください:")
+MANUAL_TASKS+=("   CREATE USER '${DB_USER}'@'%' IDENTIFIED BY '${DB_PASS}';")
+MANUAL_TASKS+=("   GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION CLIENT, SHOW VIEW, EVENT, TRIGGER ON *.* TO '${DB_USER}'@'%';")
+MANUAL_TASKS+=("   GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'%';")
+[[ -n "${TEST_DB_NAME:-}" ]] && MANUAL_TASKS+=("   GRANT ALL PRIVILEGES ON \`${TEST_DB_NAME}\`.* TO '${DB_USER}'@'%';")
+MANUAL_TASKS+=("   FLUSH PRIVILEGES;")
+MANUAL_TASKS+=("")
+
+# バイナリログ (PITR)
+if [[ "$BIN_LOG" != "ON" ]]; then
+  MANUAL_TASKS+=("3. バイナリログ (PITR) の有効化 (推奨)")
+  MANUAL_TASKS+=("   mysqld.cnf に以下を追記し、MySQLを再起動してください:")
+  MANUAL_TASKS+=("   log_bin = /var/log/mysql/mysql-bin.log")
+  MANUAL_TASKS+=("   expire_logs_days = 7")
+  MANUAL_TASKS+=("   binlog_format = ROW")
+  MANUAL_TASKS+=("")
+fi
+
+# TLS/SSL エラー (ERROR 2026) 対応
+MANUAL_TASKS+=("4. TLS/SSL エラー (ERROR 2026) への対応 (必要に応じて)")
+MANUAL_TASKS+=("   MySQL/MariaDB 接続時に TLS/SSL エラーが出る場合は、~/.my.cnf に設定を追記してください。")
+MANUAL_TASKS+=("   MySQL: [client]")
+MANUAL_TASKS+=("          ssl-mode=DISABLED")
+MANUAL_TASKS+=("   MariaDB: [client]")
+MANUAL_TASKS+=("            ssl=0")
+MANUAL_TASKS+=("")
+
+# Cron ジョブ (自動設定がスキップされた場合)
+if [[ ! -d "/etc/cron.d" ]]; then
+  MANUAL_TASKS+=("5. Cron ジョブの手動設定")
+  MANUAL_TASKS+=("   ホスト側または別のコンテナで以下の設定を行ってください:")
+  MANUAL_TASKS+=("   ${CRON_MYSQL} ${SCRIPT_DIR}/scripts/backup_mysql.sh ${CONFIG_FILE}")
+  MANUAL_TASKS+=("   ${CRON_FILES} ${SCRIPT_DIR}/scripts/backup_files.sh ${CONFIG_FILE}")
+  MANUAL_TASKS+=("   ${CRON_SYNC} ${SCRIPT_DIR}/scripts/backup_sync.sh ${CONFIG_FILE}")
+  MANUAL_TASKS+=("")
+fi
+
+# 手動対応事項の表示
+if [[ ${#MANUAL_TASKS[@]} -gt 0 ]]; then
+  echo -e "${YELLOW}${BOLD}!!! 重要: セットアップ後に手動で対応が必要な事項があります !!!${NC}"
+  echo "------------------------------------------------------------"
+  for task in "${MANUAL_TASKS[@]}"; do
+    echo -e "$task"
+  done
+  echo "------------------------------------------------------------"
+  echo ""
+fi
+
 info "手動テスト:"
 echo "  ${SCRIPT_DIR}/scripts/backup_mysql.sh ${CONFIG_FILE}"
 echo "  ${SCRIPT_DIR}/scripts/backup_files.sh ${CONFIG_FILE}"

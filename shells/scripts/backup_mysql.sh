@@ -99,7 +99,7 @@ fi
 
 FILESIZE=$(du -sh "${BACKUP_PATH}" | cut -f1)
 log "バックアップ成功: ${FILENAME} (${FILESIZE})"
-notify "MySQL バックアップ完了" "MySQL backup completed: ${FILENAME} (${FILESIZE})" "OK"
+# notify "MySQL バックアップ完了" "MySQL backup completed: ${FILENAME} (${FILESIZE})" "OK"
 
 # ---- 世代管理 ----
 log "世代管理: ${KEEP_GENERATIONS} 世代を保持"

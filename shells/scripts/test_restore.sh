@@ -16,6 +16,12 @@ LOG_DIR="${LOG_DIR:-/var/log/backup}"
 BACKUP_DIR="${BACKUP_LOCAL_DIR}/${SERVICE_NAME:-$ENVIRONMENT}/${ENVIRONMENT}/mysql"
 TEST_DB="${TEST_DB_NAME:-}"
 
+# テストDB用の接続情報（未設定の場合は本番用をフォールバックとして使用）
+TEST_HOST="${TEST_DB_HOST:-$DB_HOST}"
+TEST_PORT="${TEST_DB_PORT:-${DB_PORT:-3306}}"
+TEST_USER="${TEST_DB_USER:-$DB_USER}"
+TEST_PASS="${TEST_DB_PASS:-$DB_PASS}"
+
 # テストDBが設定されていない場合は終了
 if [[ -z "$TEST_DB" ]]; then
   echo "INFO: TEST_DB_NAME が未設定のため、テストリストアをスキップします。"
@@ -58,16 +64,16 @@ log "使用するバックアップ: $(basename "$LATEST_BACKUP")"
 
 # テストDBのクリアと作成
 log "テストDBの再作成: ${TEST_DB}"
-export MYSQL_PWD="${DB_PASS}"
-mysql -h "${DB_HOST}" -P "${DB_PORT:-3306}" -u "${DB_USER}" \
+export MYSQL_PWD="${TEST_PASS}"
+mysql -h "${TEST_HOST}" -P "${TEST_PORT}" -u "${TEST_USER}" \
   -e "DROP DATABASE IF EXISTS \`${TEST_DB}\`; CREATE DATABASE \`${TEST_DB}\`;"
 
 # リストア実行
 log "リストア実行中..."
-gunzip -c "${LATEST_BACKUP}" | mysql -h "${DB_HOST}" -P "${DB_PORT:-3306}" -u "${DB_USER}" "${TEST_DB}"
+gunzip -c "${LATEST_BACKUP}" | mysql -h "${TEST_HOST}" -P "${TEST_PORT}" -u "${TEST_USER}" "${TEST_DB}"
 
 # 簡単な検証（テーブルが存在するか）
-TABLE_COUNT=$(mysql -h "${DB_HOST}" -P "${DB_PORT:-3306}" -u "${DB_USER}" -D "${TEST_DB}" -se "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '${TEST_DB}';")
+TABLE_COUNT=$(mysql -h "${TEST_HOST}" -P "${TEST_PORT}" -u "${TEST_USER}" -D "${TEST_DB}" -se "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '${TEST_DB}';")
 
 if [[ "$TABLE_COUNT" -gt 0 ]]; then
   log "テストリストア成功: ${TABLE_COUNT} 個のテーブルを確認しました"
