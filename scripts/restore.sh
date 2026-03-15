@@ -55,14 +55,13 @@ restore オプション:
       /backup/production/files/production_storage_20260315_030000.tar.gz \\
       --target-dir /var/www/your-app
 
-  # Google Drive側のバージョン履歴からリストア
-  $(basename "$0") /etc/backup/config.env list --type mysql  # REMOTE: エントリを確認
-  $(basename "$0") /etc/backup/config.env restore REMOTE:production/mysql/production_mysql_*.sql.gz
+  # クラウドからのリストア (S3 URL またはファイル名)
+  $(basename "$0") config.env restore s3://my-bucket/backup/prod/mysql/file.sql.gz
+  $(basename "$0") config.env restore production_mysql_20260315_020000.sql.gz
 
-サービス側世代管理（gdrive / gworkspace）:
-  USE_SERVICE_VERSIONING=true の場合、ローカルのバックアップだけでなく
-  Drive側のバージョン履歴も一覧に表示されます。
-  リストア時は Drive API 経由で直接取得します。
+S3 / S3 互換ストレージからのリストア:
+  STORAGE_BACKEND が local 以外の場合、リモート上のバックアップも
+  一覧に表示されます。リストア時は aws s3 cp 経由で直接取得します。
 EOF
   exit 0
 }
@@ -114,17 +113,24 @@ list_backups() {
 
   [[ ${#search_dirs[@]} -eq 0 ]] && return 0
 
-  # クラウドリモートからも取得（rcloneが使用可能な場合）
+  # クラウドリモートからも取得（aws-cliが使用可能な場合）
   local cloud_list=()
-  if [[ "${STORAGE_BACKEND:-local}" != "local" ]] && command -v rclone &>/dev/null; then
-    local remote_base="${STORAGE_REMOTE_NAME}:${STORAGE_BUCKET}/${STORAGE_PREFIX}"
-    local rclone_path="$remote_base"
+  if [[ "${STORAGE_BACKEND:-local}" != "local" ]] && command -v aws &>/dev/null; then
+    local remote_base="s3://${STORAGE_BUCKET}/${STORAGE_PREFIX}"
+    local s3_path="$remote_base/"
     if [[ -n "$env_filter" ]]; then
-      rclone_path+="/${SERVICE_NAME:-*}/${env_filter}"
+      s3_path+="${SERVICE_NAME:-*}/${env_filter}/"
     fi
+
+    local s3_opts=()
+    [[ -n "${S3_ENDPOINT_URL:-}" ]] && s3_opts+=("--endpoint-url" "${S3_ENDPOINT_URL}")
+    [[ -n "${AWS_ACCESS_KEY_ID:-}" ]] && export AWS_ACCESS_KEY_ID
+    [[ -n "${AWS_SECRET_ACCESS_KEY:-}" ]] && export AWS_SECRET_ACCESS_KEY
+    [[ -n "${AWS_DEFAULT_REGION:-}" ]] && export AWS_DEFAULT_REGION
+
     mapfile -t cloud_list < <(
-      rclone ls "$rclone_path" 2>/dev/null \
-        | awk '{print "REMOTE:" $2}' || true
+      aws s3 ls "$s3_path" "${s3_opts[@]}" --recursive 2>/dev/null \
+        | grep ".gz$" | awk '{print "REMOTE:" $4}' || true
     )
   fi
 
@@ -269,12 +275,18 @@ restore_mysql() {
   local target_db="${2:-$DB_NAME}"
   local mask_sql_file="${3:-}"
   local stop_services="${4:-false}"
+  local TEMP_FILE=""
 
   log "MySQL リストア開始: $(basename "$backup_file") → DB:${target_db} (mask_sql=${mask_sql_file}, stop_services=${stop_services})"
 
   warn "データベース '${target_db}' を上書きします。続行しますか？ [y/N]: "
   read -r confirm
   [[ "$confirm" =~ ^[Yy]$ ]] || { info "キャンセルしました。"; return 0; }
+
+  # 一時ファイルの準備（リモートの場合）
+  if [[ "$backup_file" == REMOTE:* ]]; then
+    TEMP_FILE=$(mktemp "/tmp/restore_mysql_XXXXXX.sql.gz")
+  fi
 
   # サービス停止
   local stopped_services=()
@@ -295,14 +307,33 @@ restore_mysql() {
 
   if [[ "$backup_file" == REMOTE:* ]]; then
     local remote_file="${backup_file#REMOTE:}"
-    local remote_base="${STORAGE_REMOTE_NAME}:${STORAGE_BUCKET}/${STORAGE_PREFIX}"
-    rclone cat "${remote_base}/${remote_file}" \
-      | gunzip -c \
-      | eval "$restore_cmd" 2>>"${LOG_DIR}/restore.log"
+    local remote_full_path="s3://${STORAGE_BUCKET}/${remote_file}"
+    local s3_opts=()
+    [[ -n "${S3_ENDPOINT_URL:-}" ]] && s3_opts+=("--endpoint-url" "${S3_ENDPOINT_URL}")
+    [[ -n "${AWS_ACCESS_KEY_ID:-}" ]] && export AWS_ACCESS_KEY_ID
+    [[ -n "${AWS_SECRET_ACCESS_KEY:-}" ]] && export AWS_SECRET_ACCESS_KEY
+    [[ -n "${AWS_DEFAULT_REGION:-}" ]] && export AWS_DEFAULT_REGION
+
+    log "S3 からダウンロード中: ${remote_full_path}"
+    if ! aws s3 cp "${remote_full_path}" - "${s3_opts[@]}" > "${TEMP_FILE}" 2>>"${LOG_DIR}/restore.log"; then
+      rm -f "${TEMP_FILE}"
+      die "S3 からのダウンロードに失敗しました: ${remote_full_path}"
+    fi
+    use_file="${TEMP_FILE}"
   else
-    gunzip -c "$backup_file" \
-      | eval "$restore_cmd" 2>>"${LOG_DIR}/restore.log"
+    use_file="$backup_file"
   fi
+
+  echo "リストア中..."
+  if ! gunzip -c "$use_file" | eval "$restore_cmd" 2>>"${LOG_DIR}/restore.log"; then
+    [[ -f "${TEMP_FILE:-}" ]] && rm -f "${TEMP_FILE}"
+    echo ""
+    warn "MySQL リストアに失敗しました。権限不足の可能性があります (DROP command denied 等)。"
+    warn "バックアップユーザーに GRANT ALL PRIVILEGES ON \`${target_db}\`.* が付与されているか確認してください。"
+    die "詳細は ${LOG_DIR}/restore.log を確認してください。"
+  fi
+
+  [[ -f "${TEMP_FILE:-}" ]] && rm -f "${TEMP_FILE}"
 
   # マスク処理用SQLの実行
   if [[ -n "$mask_sql_file" ]]; then
@@ -329,33 +360,50 @@ restore_mysql() {
 restore_files() {
   local backup_file="$1"
   local restore_dir="${2:-/}"
+  local TEMP_FILE=""
 
   log "ファイルリストア開始: $(basename "$backup_file") → ${restore_dir}"
 
+  # 一時ファイルの準備（リモートの場合）
+  if [[ "$backup_file" == REMOTE:* ]]; then
+    TEMP_FILE=$(mktemp "/tmp/restore_files_XXXXXX.tar.gz")
+    
+    local remote_file="${backup_file#REMOTE:}"
+    local remote_full_path="s3://${STORAGE_BUCKET}/${remote_file}"
+    local s3_opts=()
+    [[ -n "${S3_ENDPOINT_URL:-}" ]] && s3_opts+=("--endpoint-url" "${S3_ENDPOINT_URL}")
+    [[ -n "${AWS_ACCESS_KEY_ID:-}" ]] && export AWS_ACCESS_KEY_ID
+    [[ -n "${AWS_SECRET_ACCESS_KEY:-}" ]] && export AWS_SECRET_ACCESS_KEY
+    [[ -n "${AWS_DEFAULT_REGION:-}" ]] && export AWS_DEFAULT_REGION
+
+    log "S3 からダウンロード中: ${remote_full_path}"
+    if ! aws s3 cp "${remote_full_path}" - "${s3_opts[@]}" > "${TEMP_FILE}" 2>>"${LOG_DIR}/restore.log"; then
+      rm -f "${TEMP_FILE}"
+      die "S3 からのダウンロードに失敗しました: ${remote_full_path}"
+    fi
+    backup_file="${TEMP_FILE}"
+  fi
+
   echo ""
   echo "含まれるファイル（先頭20件）:"
-  if [[ "$backup_file" == REMOTE:* ]]; then
-    local remote_file="${backup_file#REMOTE:}"
-    local remote_base="${STORAGE_REMOTE_NAME}:${STORAGE_BUCKET}/${STORAGE_PREFIX}"
-    rclone cat "${remote_base}/${remote_file}" \
-      | tar tzf - 2>/dev/null | head -20
-  else
-    tar tzf "$backup_file" 2>/dev/null | head -20
-  fi
+  tar tzf "$backup_file" 2>/dev/null | head -20
   echo ""
 
   warn "上記を '${restore_dir}' に展開します。続行しますか？ [y/N]: "
   read -r confirm
-  [[ "$confirm" =~ ^[Yy]$ ]] || { info "キャンセルしました。"; return 0; }
-
-  if [[ "$backup_file" == REMOTE:* ]]; then
-    local remote_file="${backup_file#REMOTE:}"
-    local remote_base="${STORAGE_REMOTE_NAME}:${STORAGE_BUCKET}/${STORAGE_PREFIX}"
-    rclone cat "${remote_base}/${remote_file}" \
-      | tar xzf - -C "$restore_dir"
-  else
-    tar xzf "$backup_file" -C "$restore_dir"
+  if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+    [[ -n "$TEMP_FILE" ]] && rm -f "$TEMP_FILE"
+    info "キャンセルしました。"
+    return 0
   fi
+
+  echo "展開中..."
+  if ! tar xzf "$backup_file" -C "$restore_dir"; then
+    [[ -n "$TEMP_FILE" ]] && rm -f "$TEMP_FILE"
+    die "ファイルリストアに失敗しました。"
+  fi
+
+  [[ -n "$TEMP_FILE" ]] && rm -f "$TEMP_FILE"
 
   info "✅ ファイルリストア完了: $(basename "$backup_file") → ${restore_dir}"
   log "ファイルリストア完了: $(basename "$backup_file") → ${restore_dir}"
@@ -534,9 +582,39 @@ cli_restore() {
     esac
   done
 
-  # REMOTE: プレフィックス以外はローカルファイルの存在確認
-  if [[ "$backup_file" != REMOTE:* ]]; then
-    [[ -f "$backup_file" ]] || die "ファイルが見つかりません: $backup_file"
+  if [[ "$backup_file" == s3://* ]]; then
+    # S3 URL (s3://bucket/path/to/file) の正規化
+    # 指定されたバケットが config.env の STORAGE_BUCKET と異なる場合、一時的に STORAGE_BUCKET を上書き
+    local bucket_name="${backup_file#s3://}"
+    bucket_name="${bucket_name%%/*}"
+    if [[ "$bucket_name" != "$STORAGE_BUCKET" ]]; then
+      warn "指定されたバケット (${bucket_name}) が設定 (${STORAGE_BUCKET}) と異なります。指定されたバケットを使用します。"
+      STORAGE_BUCKET="$bucket_name"
+    fi
+
+    local path_only="${backup_file#s3://*/}"
+    backup_file="REMOTE:${path_only}"
+  elif [[ "$backup_file" == REMOTE:* ]]; then
+    # 既に REMOTE: 形式の場合はそのまま（パスがバケット内プレフィックス以降であることを期待）
+    :
+  else
+    # ローカルファイルの存在確認
+    if [[ ! -f "$backup_file" ]]; then
+      # ローカルで見つからない場合、ファイル名のみならクラウドから検索を試みる
+      if [[ "$backup_file" != */* ]]; then
+        info "ローカルファイルが見つかりません。クラウド上のファイルを検索しています: $backup_file"
+        local found_cloud
+        found_cloud=$(list_backups "" "" "" "$backup_file" | grep "^REMOTE:" | head -1 || true)
+        if [[ -n "$found_cloud" ]]; then
+          backup_file="$found_cloud"
+          info "クラウド上のファイルが見つかりました: ${backup_file#REMOTE:}"
+        else
+          die "ファイルが見つかりません: $backup_file"
+        fi
+      else
+        die "ファイルが見つかりません: $backup_file"
+      fi
+    fi
   fi
 
   local fname

@@ -314,7 +314,7 @@ const DEFAULT_SERVICES = [
     currency: 'jpy', storagePerGB: 0.63, uploadPerGB: 0, downloadPerGB: 0,
     freeDownloadGB: 9999, minStorageDays: 0,
     supportsVersioning: true, useServiceVersioning: false,
-    note: '月額プラン換算(2TB基準)。S3非互換・rclone経由。Drive側バージョン管理対応',
+    note: '月額プラン換算(2TB基準)。S3非互換のため本スクリプト非対応',
     url: 'https://one.google.com/about/plans?hl=ja', enabled: false
   },
   {
@@ -322,7 +322,7 @@ const DEFAULT_SERVICES = [
     currency: 'jpy', storagePerGB: 0.75, uploadPerGB: 0, downloadPerGB: 0,
     freeDownloadGB: 9999, minStorageDays: 0,
     supportsVersioning: true, useServiceVersioning: false,
-    note: 'Business Standard換算(2TB/ユーザー)。共有ドライブ・バージョン管理対応',
+    note: 'Business Standard換算(2TB/ユーザー)。S3非互換のため本スクリプト非対応',
     url: 'https://workspace.google.com/intl/ja/pricing/', enabled: false
   },
 ];
@@ -749,18 +749,18 @@ function editService(id) {
       <input type="text" id="f-note" value="${esc(svc.note)}">
     </div>
     <div class="form-group wide" style="background:#f0f9ff;border-radius:8px;padding:12px;border:1px solid #bae6fd">
-      <label style="font-size:13px;font-weight:600;color:#0369a1">サービス側世代管理（Google Drive / Workspace専用）</label>
+      <label style="font-size:13px;font-weight:600;color:#0369a1">サービス側世代管理（旧Google Drive / Workspace専用）</label>
       <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
           <input type="checkbox" id="f-supports-versioning" ${svc.supportsVersioning?'checked':''}>
-          Drive側バージョン管理に対応している（gdrive / gworkspace のみ）
+          オブジェクトストレージ側のバージョン管理に対応している
         </label>
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px" id="f-use-ver-wrap">
           <input type="checkbox" id="f-use-versioning" ${svc.useServiceVersioning?'checked':''} ${!svc.supportsVersioning?'disabled':''}>
-          Drive側世代管理を使用する（有効時: ストレージは最新×1.2で近似計算）
+          サービス側世代管理を使用する（有効時: ストレージは最新×1.2で近似計算）
         </label>
       </div>
-      <p class="form-note" style="margin-top:6px">有効にすると、シェル側では世代削除をスキップしDrive側のバージョン履歴に委ねます。<br>Driveは最大100バージョン保持。容量上限に達すると古いバージョンが自動削除されます。</p>
+      <p class="form-note" style="margin-top:6px">※現在は S3 互換ストレージのみ対応しており、シェル側で世代管理（削除）を行うのが標準です。</p>
     </div>`;
   document.getElementById('f-supports-versioning').addEventListener('change', function() {
     const useEl = document.getElementById('f-use-versioning');

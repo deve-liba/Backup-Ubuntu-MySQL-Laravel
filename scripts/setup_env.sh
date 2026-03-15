@@ -70,12 +70,26 @@ echo "----------------------------------------------------------"
 
 ask "追加バックアップディレクトリ (スペース区切り)" "EXTRA_BACKUP_DIRS" ""
 ask "サーバー設定バックアップ対象" "CONFIG_BACKUP_DIRS" "/etc/nginx /etc/php"
-ask "ストレージバックエンド (b2/wasabi/s3/gdrive等)" "STORAGE_BACKEND" "local"
+ask "ストレージバックエンド (s3/wasabi/sakura/idrive/local)" "STORAGE_BACKEND" "local"
 
 if [ "$STORAGE_BACKEND" != "local" ]; then
-    ask "rclone リモート名" "STORAGE_REMOTE_NAME" "mybackup"
     ask "ストレージバケット名" "STORAGE_BUCKET" "your-backup-bucket"
     ask "バケット内プレフィックス" "STORAGE_PREFIX" "backups/server1"
+    
+    echo ""
+    echo "--- AWS / S3 互換ストレージの認証情報 ---"
+    ask "AWS Access Key ID" "AWS_ACCESS_KEY_ID" ""
+    read -s -p "AWS Secret Access Key: " AWS_SECRET_ACCESS_KEY
+    echo ""
+    ask "AWS Default Region" "AWS_DEFAULT_REGION" "ap-northeast-1"
+    
+    if [ "$STORAGE_BACKEND" != "s3" ]; then
+        ask "S3 互換エンドポイント URL (例: https://s3.wasabisys.com)" "S3_ENDPOINT_URL" ""
+    else
+        S3_ENDPOINT_URL=""
+    fi
+    
+    ask "バケットが存在しない場合に新規作成しますか？ (y/n)" "CREATE_BUCKET" "n"
 fi
 
 ask "通知先メールアドレス" "NOTIFY_EMAIL" ""
@@ -88,6 +102,7 @@ cat << EOF > "$CONFIG_FILE"
 # ==========================================================
 
 # ----- 環境識別 -----
+# バックアップファイル名・ログに付与される識別子
 SERVICE_NAME=$SERVICE_NAME
 ENVIRONMENT=$ENVIRONMENT
 
@@ -99,8 +114,13 @@ DB_USER=$DB_USER
 DB_PASS='$DB_PASS'
 
 # ----- バックアップ対象ディレクトリ -----
+# Laravelアプリケーションのルートディレクトリ
 APP_DIR=$APP_DIR
+
+# 追加でバックアップするディレクトリ（スペース区切り、不要なら空にする）
 EXTRA_BACKUP_DIRS="$EXTRA_BACKUP_DIRS"
+
+# サーバー設定ファイルのバックアップ（スペース区切り）
 CONFIG_BACKUP_DIRS="$CONFIG_BACKUP_DIRS"
 
 # ----- ローカルバックアップ設定 -----
@@ -108,29 +128,60 @@ BACKUP_LOCAL_DIR=$BACKUP_LOCAL_DIR
 KEEP_GENERATIONS=$KEEP_GENERATIONS
 
 # ----- Cron スケジュール -----
-CRON_MYSQL="0 2 * * *"
-CRON_FILES="0 3 * * *"
-CRON_SYNC="0 4 * * *"
+# cron形式: 分 時 日 月 曜日
+CRON_MYSQL="0 2 * * *"          # MySQLバックアップ（毎日 2:00）
+CRON_FILES="0 3 * * *"          # ファイルバックアップ（毎日 3:00）
+CRON_SYNC="0 4 * * *"           # クラウド同期（毎日 4:00）
 
 # ----- ストレージバックエンド -----
+# 選択肢: s3 / wasabi / sakura / idrive / local
 STORAGE_BACKEND=$STORAGE_BACKEND
-STORAGE_REMOTE_NAME=$STORAGE_REMOTE_NAME
+
+# バケット名
 STORAGE_BUCKET=$STORAGE_BUCKET
+
+# バケット内のプレフィックス（サーバー識別用フォルダ名）
 STORAGE_PREFIX=$STORAGE_PREFIX
 
+# ----- AWS S3 / S3 互換ストレージ設定 -----
+# 公式 CLI (aws s3) を直接実行します。
+AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY='$AWS_SECRET_ACCESS_KEY'
+AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION
+
+# S3 互換ストレージの場合のエンドポイント URL
+# AWS S3 の場合は空にしてください。
+S3_ENDPOINT_URL=$S3_ENDPOINT_URL
+
+# セットアップ時にバケットを新規作成するか (y/n)
+CREATE_BUCKET=$CREATE_BUCKET
+
 # ----- 通知設定 -----
+# 通知先メールアドレス
 NOTIFY_EMAIL=$NOTIFY_EMAIL
+
+# SendGrid (APIを利用する場合)
+SENDGRID_API_KEY=
+SENDGRID_FROM_EMAIL=
+
+# チャットツール Webhook URL (Slack, Mattermost 等)
 WEBHOOK_URL=$WEBHOOK_URL
+
+# ----- テストDBリストアチェック -----
+# バックアップが正しくリストアできるか定期的に検証するためのDB
+TEST_DB_NAME=${SERVICE_NAME}_test
+CRON_TEST_RESTORE="0 5 * * *"     # テストリストア実行（毎日 5:00）
 
 # ----- ログ設定 -----
 LOG_DIR=/var/log/backup
 
-# ----- その他設定 (詳細は config.env.example を参照) -----
-TEST_DB_NAME=${DB_NAME}_test
-CRON_TEST_RESTORE="0 5 * * *"
-USE_SERVICE_VERSIONING=false
-MASK_COLUMNS=""
-MASK_DOMAIN="deve-liba.jp"
+# ----- リストア設定 (MySQLのみ) -----
+# リストア時に実行するマスク用SQLファイルのパス
+# 例: MASK_SQL_FILE="scripts/mask_data.sql"
+MASK_SQL_FILE=""
+
+# リストア開始前に停止し、完了後に起動するサービス名（スペース区切り）
+# 例: RESTORE_STOP_SERVICES="nginx php8.3-fpm"
 RESTORE_STOP_SERVICES=""
 EOF
 

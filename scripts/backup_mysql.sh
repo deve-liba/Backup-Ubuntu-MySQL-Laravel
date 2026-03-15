@@ -22,7 +22,6 @@ usage() {
   - mysqldump --single-transaction でオンラインバックアップ
   - gzip 圧縮して保存
   - KEEP_GENERATIONS 世代を超えた古いファイルを削除
-  - USE_SERVICE_VERSIONING=true の場合（gdrive/gworkspace）: 世代削除をスキップ
   - Slack / メール通知（設定時のみ）
 
 例:
@@ -103,20 +102,13 @@ log "バックアップ成功: ${FILENAME} (${FILESIZE})"
 notify "MySQL バックアップ完了" "MySQL backup completed: ${FILENAME} (${FILESIZE})" "OK"
 
 # ---- 世代管理 ----
-# USE_SERVICE_VERSIONING=true かつ gdrive/gworkspace の場合はスキップ
-USE_SVC_VER="${USE_SERVICE_VERSIONING:-false}"
-BACKEND="${STORAGE_BACKEND:-local}"
-if [[ "$USE_SVC_VER" == "true" && ( "$BACKEND" == "gdrive" || "$BACKEND" == "gworkspace" ) ]]; then
-  log "USE_SERVICE_VERSIONING=true: 世代削除をスキップ（Drive側のバージョン履歴を使用）"
-else
-  log "世代管理: ${KEEP_GENERATIONS} 世代を保持"
-  ls -t "${BACKUP_DIR}/${SERVICE_NAME:-$ENVIRONMENT}_${ENVIRONMENT}_mysql_"*.sql.gz 2>/dev/null \
-    | tail -n "+$((KEEP_GENERATIONS + 1))" \
-    | while read -r old_file; do
-        log "削除: $(basename "$old_file")"
-        rm -f "$old_file"
-      done
-fi
+log "世代管理: ${KEEP_GENERATIONS} 世代を保持"
+ls -t "${BACKUP_DIR}/${SERVICE_NAME:-$ENVIRONMENT}_${ENVIRONMENT}_mysql_"*.sql.gz 2>/dev/null \
+  | tail -n "+$((KEEP_GENERATIONS + 1))" \
+  | while read -r old_file; do
+      log "削除: $(basename "$old_file")"
+      rm -f "$old_file"
+    done
 
 CURRENT_COUNT=$(ls -1 "${BACKUP_DIR}/${SERVICE_NAME:-$ENVIRONMENT}_${ENVIRONMENT}_mysql_"*.sql.gz 2>/dev/null | wc -l)
 log "保存中のバックアップ数: ${CURRENT_COUNT}"

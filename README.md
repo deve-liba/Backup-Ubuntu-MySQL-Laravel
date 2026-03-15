@@ -15,6 +15,7 @@ backup-system/
 │   ├── backup_files.sh     ファイルバックアップ（storage / .env / サーバー設定）
 │   ├── backup_sync.sh      クラウドストレージ同期
 │   ├── notify.sh           共通通知基盤（Slack/Mattermost/Email/SendGrid）
+│   ├── test_notify.sh      通知テスト用スクリプト（新規）
 │   ├── test_restore.sh     テスト用DBへの自動リストア検証
 │   ├── setup_env.sh        対話型設定ファイル作成（config.env）
 │   └── restore.sh          リストア（インタラクティブ対応）
@@ -26,6 +27,7 @@ backup-system/
 ---
 
 ## システム評価
+
 本バックアップシステムの設計、機能、安全性についての包括的な評価レポートを公開しています。
 導入検討や運用設計の参考にしてください。
 
@@ -63,17 +65,19 @@ vi config.env
 
 | 項目                                            | 説明                                      |
 |-----------------------------------------------|-----------------------------------------|
-| `SERVICE_NAME`                                | サービス名（英数字、ハイフン、アンダースコア） |
+| `SERVICE_NAME`                                | サービス名（英数字、ハイフン、アンダースコア）                 |
 | `ENVIRONMENT`                                 | 環境名（production / staging / development） |
 | `DB_HOST` / `DB_NAME` / `DB_USER` / `DB_PASS` | MySQL接続情報                               |
 | `APP_DIR`                                     | Laravelアプリのルートパス                        |
-| `STORAGE_BACKEND`                             | バックアップ先ストレージ                            |
-| `STORAGE_REMOTE_NAME` / `STORAGE_BUCKET`      | rcloneリモート名・バケット                        |
-| `WEBHOOK_URL`                                 | Slack/Mattermost 通知用 Webhook             |
-| `SENDGRID_API_KEY`                            | SendGrid API キー（メール用）                  |
-| `TEST_DB_NAME`                                | テスト用DB名（リストア検証用）                   |
-| `MASK_SQL_FILE`                               | マスク用SQLファイルのパス（任意）                |
-| `RESTORE_STOP_SERVICES`                       | リストア時に停止・起動するサービス（任意）         |
+| `STORAGE_BACKEND`                             | バックアップ先ストレージ (s3/wasabi/sakura/idrive/local) |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | AWS S3 / S3 互換ストレージの認証情報           |
+| `STORAGE_BUCKET`                              | ストレージのバケット名                    |
+| `S3_ENDPOINT_URL`                             | S3 互換ストレージのエンドポイント (任意)        |
+| `WEBHOOK_URL`                                 | Slack/Mattermost 通知用 Webhook            |
+| `SENDGRID_API_KEY`                            | SendGrid API キー（メール用）                   |
+| `TEST_DB_NAME`                                | テスト用DB名（リストア検証用）                        |
+| `MASK_SQL_FILE`                               | マスク用SQLファイルのパス（任意）                      |
+| `RESTORE_STOP_SERVICES`                       | リストア時に停止・起動するサービス（任意）                   |
 
 ### 2. インストールとスケジュール登録
 
@@ -84,8 +88,7 @@ sudo bash setup.sh
 すでに `config.env` を作成済みの場合は、その内容に基づいて以下の処理が行われます：
 
 - 依存パッケージのチェック（mysqldump, gzip, tar, curl）
-- rclone のインストール（未インストールの場合）
-- rclone リモートの設定（ストレージバックエンドに応じて）
+- aws-cli のチェック（未インストールの場合の案内）
 - バックアップ・ログディレクトリの作成
 - Cron ジョブの設定（`/etc/cron.d/backup-{サービス名}-{環境名}`）
 - テスト用データベースの権限設定案内
@@ -97,6 +100,9 @@ sudo bash setup.sh
 bash scripts/backup_mysql.sh config.env
 bash scripts/backup_files.sh config.env
 bash scripts/backup_sync.sh config.env
+
+# 通知テスト
+bash scripts/test_notify.sh config.env
 
 # バックアップ一覧で作成されたか確認
 bash scripts/restore.sh config.env list
@@ -198,7 +204,8 @@ gunzip < /backup/production/mysql/production_mysql_20260315_020000.sql.gz \
 
 - **データマスク**: `MASK_SQL_FILE` で指定したSQLファイルをリストア完了直後に実行します。メールアドレスの難読化や個人情報の削除に利用できます。
     - サンプルファイル `scripts/mask_data.sql.example` を参考に、プロジェクトに合わせたSQLを作成してください。
-- **サービス制御**: `RESTORE_STOP_SERVICES` に指定したサービス（例: `nginx`, `php-fpm`）をリストア開始前に停止し、完了後に自動起動します。不整合の防止や安全な切り替えが可能です。
+- **サービス制御**: `RESTORE_STOP_SERVICES` に指定したサービス（例: `nginx`, `php-fpm`
+  ）をリストア開始前に停止し、完了後に自動起動します。不整合の防止や安全な切り替えが可能です。
 
 インタラクティブモードでは、これらを実行するかどうかの確認プロンプトが表示されます。
 
@@ -220,23 +227,8 @@ mysqlbinlog /var/log/mysql/mysql-bin.000001 \
 
 ### 選択ガイド
 
-コスト優先なら **Backblaze B2** または **Wasabi** が最有力候補です。
+コスト優先なら **Wasabi** や **IDrive e2**、国内保管なら **さくらのオブジェクトストレージ** が有力候補です。
 詳細な費用試算は `cost_calculator.html` をブラウザで開いてください。
-
----
-
-### Backblaze B2
-
-**設定値:** `STORAGE_BACKEND=b2`
-
-| 項目     | 内容                                              |
-|--------|-------------------------------------------------|
-| 保管コスト  | $0.006/GB/月（約¥0.9/GB）                           |
-| アップロード | 無料                                              |
-| ダウンロード | $0.01/GB（1GB/日まで無料）                             |
-| 公式URL  | https://www.backblaze.com/cloud-storage/pricing |
-
-**特徴:** 最安クラスのコスト。S3互換APIあり（rclone対応）。毎日1GBまでのダウンロードが無料なので、定期的なリストアテストも実質無料で行える。世界最大規模のストレージプロバイダーの一つ。
 
 ---
 
@@ -251,8 +243,8 @@ mysqlbinlog /var/log/mysql/mysql-bin.000001 \
 | ダウンロード | **無料**（回数・容量制限なし）                         |
 | 公式URL  | https://wasabi.com/cloud-storage-pricing/ |
 
-**特徴:** ダウンロードが完全無料なため、リストアテストを頻繁に行う場合や大容量のリストアが想定される場合に有利。ただし *
-*90日最低保管ポリシー** があり、90日未満で削除したファイルも90日分の料金が発生するため、頻繁に世代削除する運用では割高になる可能性あり。
+**特徴:** ダウンロードが完全無料なため、リストアテストを頻繁に行う場合や大容量のリストアが想定される場合に有利。ただし **90日最低保管ポリシー** があり、90日未満で削除したファイルも90日分の料金が発生するため、頻繁に世代削除する運用では割高になる可能性あり。
+S3 互換エンドポイント（例: `https://s3.ap-northeast-1.wasabisys.com`）を `S3_ENDPOINT_URL` に設定して使用します。
 
 ---
 
@@ -269,6 +261,7 @@ mysqlbinlog /var/log/mysql/mysql-bin.000001 \
 
 **特徴:**
 業界標準のストレージ。コストは最も高いが、信頼性・可用性・エコシステムは最高峰。IAM、CloudWatch、Lambdaとの連携が容易。すでにAWSを利用している場合は移行コストがほぼゼロ。PUT/GETリクエストにも課金あり。
+公式 CLI (`aws s3`) を直接使用します。
 
 ---
 
@@ -284,37 +277,7 @@ mysqlbinlog /var/log/mysql/mysql-bin.000001 \
 | 公式URL  | https://www.idrive.com/object-storage-e2/ |
 
 **特徴:** S3互換APIで最安クラスのコスト。知名度は低めだが、バックアップ用途に特化しており、コスト最優先の場合に有力。
-
----
-
-### Azure Blob Storage（Cool tier）
-
-**設定値:** `STORAGE_BACKEND=azure`
-
-| 項目     | 内容                                                               |
-|--------|------------------------------------------------------------------|
-| 保管コスト  | $0.010/GB/月（約¥1.5/GB）                                            |
-| アップロード | 無料                                                               |
-| ダウンロード | $0.01/GB（約¥1.5/GB）                                               |
-| 公式URL  | https://azure.microsoft.com/ja-jp/pricing/details/storage/blobs/ |
-
-**特徴:** Microsoftのクラウドストレージ。Office 365やAzure ADとの親和性が高い。Cool tierはバックアップなどの低頻度アクセスに最適化。
-
----
-
-### Google Cloud Storage（Nearline）
-
-**設定値:** `STORAGE_BACKEND=gcs`
-
-| 項目     | 内容                                       |
-|--------|------------------------------------------|
-| 保管コスト  | $0.010/GB/月（約¥1.5/GB）                    |
-| アップロード | 無料                                       |
-| ダウンロード | $0.01/GB（約¥1.5/GB）                       |
-| 公式URL  | https://cloud.google.com/storage/pricing |
-
-**特徴:** GoogleのクラウドストレージのNearlineクラスは月1回以下のアクセス向け。GCPを利用している場合に選択肢となる。BigQueryやCloud
-Functionsとの連携が容易。
+S3 互換エンドポイントを `S3_ENDPOINT_URL` に設定して使用します。
 
 ---
 
@@ -329,40 +292,34 @@ Functionsとの連携が容易。
 | ダウンロード | ¥20/GB                                                   |
 | 公式URL  | https://cloud.sakura.ad.jp/specification/object-storage/ |
 
-**特徴:** 国内データセンター（大阪/石狩）でのデータ保管。**円建てのため為替リスクがゼロ**
-。個人情報や機密データを国外に出したくない要件に適している。S3互換APIあり。
+**特徴:** 国内データセンター（大阪/石狩）でのデータ保管。**円建てのため為替リスクがゼロ**。個人情報や機密データを国外に出したくない要件に適している。S3互換APIあり。
+エンドポイント（`https://s3.isk01.sakurastorage.jp`）を `S3_ENDPOINT_URL` に設定して使用します。
 
 ---
 
-### Google Drive（Google One）
+## Docker 環境での Cron 利用
 
-**設定値:** `STORAGE_BACKEND=gdrive`（rclone経由）
+多くの PHP Docker イメージ（`php:8.x-fpm` など）にはデフォルトで cron がインストールされておらず、`/etc/cron.d`
+も存在しません。Docker 環境でバックアップを自動実行するには、以下のいずれかの方法を推奨します。
 
-| 項目     | 内容                                       |
-|--------|------------------------------------------|
-| 保管コスト  | 月額プラン（100GB: ¥250/月、2TB: ¥1,300/月）       |
-| ダウンロード | 無料                                       |
-| 公式URL  | https://one.google.com/about/plans?hl=ja |
+### 方法 1: ホスト側の Cron を利用する（推奨）
 
-**特徴:** S3互換APIは非対応だが、rcloneでアクセス可能。コストは定額プランのため予測可能。ファイル更新時に*
-*最大100バージョンのバージョン履歴**を自動保持するため、`USE_SERVICE_VERSIONING=true`
-を設定するとスクリプト側の世代削除をスキップしDrive側のバージョン管理に委ねられます。
+ホストマシン（Ubuntu等）の cron から `docker exec` を介してスクリプトを実行します。これが最も管理しやすく確実です。
 
----
+`/etc/cron.d/backup-myapp` (ホスト側) の例:
 
-### Google Workspace
+```bash
+# MySQL バックアップ
+0 2 * * * root docker exec -t php /var/www/scripts/backup_mysql.sh /var/www/config.env
+# ファイル バックアップ
+0 3 * * * root docker exec -t php /var/www/scripts/backup_files.sh /var/www/config.env
+# クラウド 同期
+0 4 * * * root docker exec -t php /var/www/scripts/backup_sync.sh /var/www/config.env
+```
 
-**設定値:** `STORAGE_BACKEND=gworkspace`（rclone経由）
+### 方法 2: 別途 Cron コンテナを用意する
 
-| 項目     | 内容                                                                        |
-|--------|---------------------------------------------------------------------------|
-| 保管コスト  | Business Starter: ¥680/ユーザー/月（30GB）〜Business Standard: ¥1,360/ユーザー/月（2TB） |
-| ダウンロード | 無料                                                                        |
-| 公式URL  | https://workspace.google.com/intl/ja/pricing/                             |
-
-**特徴:** 組織・チームでのGoogle Workspace契約がある場合、**共有ドライブ（Shared Drive）** に保存することでチーム全体でバックアップを管理できます。個人の
-Google Drive と異なり、共有ドライブはメンバーが退職してもデータが消えません。Google Drive 同様に**最大100バージョンのバージョン履歴
-**を持つため `USE_SERVICE_VERSIONING=true` が利用可能です。rclone設定時は `GWORKSPACE_DRIVE_ID`（共有ドライブのID）の指定が必要です。
+バックアップ実行専用のコンテナ（例: `apt install cron` 済みの Debian イメージ）を用意し、そこから実行します。
 
 ---
 
@@ -386,40 +343,7 @@ NOTIFY_EMAIL=admin@your-domain.com
 
 ---
 
-## サービス側世代管理（Google Drive / Workspace）
-
-`USE_SERVICE_VERSIONING=true` を設定すると、バックアップの世代管理をスクリプト側ではなく **Drive側のバージョン履歴**
-に委ねます。対象バックエンドは `gdrive` / `gworkspace` のみです。
-
-### 動作の違い
-
-| 設定                                    | ローカル世代削除                  | クラウド同期方式                   | 世代の管理主体      |
-|---------------------------------------|---------------------------|----------------------------|--------------|
-| `USE_SERVICE_VERSIONING=false`（デフォルト） | あり（KEEP_GENERATIONS世代を保持） | `rclone sync`（ローカルと一致）     | スクリプト        |
-| `USE_SERVICE_VERSIONING=true`         | スキップ                      | `rclone copy`（クラウド側を削除しない） | Google Drive |
-
-### Drive側バージョン履歴の仕様
-
-- **最大100バージョン**を保持（Googleの仕様）
-- 同名ファイルをアップロードするたびにバージョンが積み上がる
-- Drive の容量上限に達すると古いバージョンが自動削除される
-- バージョン一覧の確認・ダウンロードは Google Drive の Web UIから可能
-
-### 設定例
-
-```bash
-# config.env
-STORAGE_BACKEND=gworkspace
-GWORKSPACE_REMOTE_NAME=gworkspace
-GWORKSPACE_DRIVE_ID=xxxxxxxxxxxxxxxxx   # 共有ドライブのID
-USE_SERVICE_VERSIONING=true
-```
-
-### 注意点
-
-- `USE_SERVICE_VERSIONING=true` の場合、Drive 側の世代は Drive 容量を消費します
-- コスト試算ツール（cost_calculator.html）では「Drive世代管理」が有効な場合、ストレージを **最新1世代 × 1.2** で近似計算します
-- Drive側からのリストアは `restore.sh list` で `REMOTE:` プレフィックスのエントリとして表示されます
+# なし
 
 ---
 
@@ -435,6 +359,42 @@ log_bin = /var/log/mysql/mysql-bin.log
 expire_logs_days = 7
 binlog_format = ROW
 ```
+
+---
+
+## トラブルシューティング
+
+### TLS/SSL エラー (ERROR 2026)
+
+MySQL/MariaDB への接続時に以下のエラーが発生する場合があります：
+
+```text
+ERROR 2026 (HY000): TLS/SSL error: self-signed certificate in certificate chain
+```
+
+これは、サーバー側の証明書が自己署名である場合や、クライアント側で正しく検証できない場合に発生します。
+信頼できるネットワーク内であれば、SSLを無効化することで回避できます。
+
+#### 推奨される対応策
+
+`~/.my.cnf`（実行ユーザーのホームディレクトリ）に以下の設定を追記してください。
+**MySQL または MariaDB のバージョンにより書き方が異なるので注意してください。**
+
+**MySQL 5.7 / 8.0+ の場合:**
+
+```ini
+[client]
+ssl-mode=DISABLED
+```
+
+**MariaDB の場合:**
+
+```ini
+[client]
+ssl=0
+```
+
+設定後、再度バックアップスクリプト等を実行してエラーが解消されるか確認してください。
 
 ---
 

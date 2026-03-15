@@ -20,12 +20,9 @@ usage() {
   [config.envのパス]   設定ファイルのパス（省略時: スクリプトの親ディレクトリの config.env）
 
 動作:
-  - rclone sync でローカル → クラウドへ同期
-  - USE_SERVICE_VERSIONING=true の場合（gdrive/gworkspace）:
-      rclone copy を使用（同期元で削除されてもクラウド側は削除しない）
-  - USE_SERVICE_VERSIONING=false: rclone sync（クラウド側もローカルと同一に保つ）
+  - aws s3 sync でローカル → クラウドへ同期
 
-対応バックエンド: b2, wasabi, s3, sakura, gdrive, gworkspace, azure, gcs, idrive
+対応バックエンド: s3, wasabi, sakura, idrive
 
 例:
   $(basename "$0")
@@ -59,10 +56,15 @@ notify() {
 
 on_error() {
   log "ERROR: クラウド同期失敗 (終了コード: $?)"
-  notify "クラウド同期失敗" "Cloud sync failed on $(hostname) at $(date). Check ${LOG_DIR}/rclone.log for details." "ERROR"
+  notify "クラウド同期失敗" "Cloud sync failed on $(hostname) at $(date). Check ${LOG_DIR}/sync.log for details." "ERROR"
   exit 1
 }
 trap on_error ERR
+
+# ---- AWS 認証設定 ----
+[[ -n "${AWS_ACCESS_KEY_ID:-}" ]] && export AWS_ACCESS_KEY_ID
+[[ -n "${AWS_SECRET_ACCESS_KEY:-}" ]] && export AWS_SECRET_ACCESS_KEY
+[[ -n "${AWS_DEFAULT_REGION:-}" ]] && export AWS_DEFAULT_REGION
 
 # ---- ローカルのみの場合はスキップ ----
 if [[ "${STORAGE_BACKEND:-local}" == "local" ]]; then
@@ -70,12 +72,18 @@ if [[ "${STORAGE_BACKEND:-local}" == "local" ]]; then
   exit 0
 fi
 
-command -v rclone &>/dev/null || { log "ERROR: rclone がインストールされていません"; exit 1; }
+command -v aws &>/dev/null || { log "ERROR: aws-cli がインストールされていません"; exit 1; }
 
 mkdir -p "$LOG_DIR"
 
 # ---- リモートパス構築 ----
-REMOTE_PATH="${STORAGE_REMOTE_NAME}:${STORAGE_BUCKET}/${STORAGE_PREFIX}/${SERVICE_NAME:-$ENVIRONMENT}/${ENVIRONMENT}"
+# S3 互換ストレージの場合はエンドポイントを指定
+S3_OPTS=()
+if [[ -n "${S3_ENDPOINT_URL:-}" ]]; then
+  S3_OPTS+=("--endpoint-url" "${S3_ENDPOINT_URL}")
+fi
+
+REMOTE_PATH="s3://${STORAGE_BUCKET}/${STORAGE_PREFIX}/${SERVICE_NAME:-$ENVIRONMENT}/${ENVIRONMENT}"
 
 log "=== クラウド同期開始 ==="
 log "サービス名: ${SERVICE_NAME:-$ENVIRONMENT}"
@@ -94,40 +102,20 @@ if [[ $LOCAL_COUNT -eq 0 ]]; then
   exit 0
 fi
 
-# ---- rclone 同期実行 ----
-# USE_SERVICE_VERSIONING=true かつ gdrive/gworkspace の場合:
-#   rclone copy を使用（ローカルで削除されてもクラウド側は削除せず、Drive側のバージョン履歴に委ねる）
-# それ以外:
-#   rclone sync（クラウド側をローカルと完全一致に保つ）
-# 削除を伴う同期の場合は --delete-before を推奨（容量節約のため）
+# ---- aws s3 sync 実行 ----
+# クラウド側をローカルと完全一致に保つ（--delete）
+log "aws s3 sync を使用（ローカルとクラウドを同期）"
 
-USE_SVC_VER="${USE_SERVICE_VERSIONING:-false}"
-BACKEND="${STORAGE_BACKEND:-local}"
-
-RCLONE_EXTRA_OPTS=()
-if [[ "$USE_SVC_VER" == "true" && ( "$BACKEND" == "gdrive" || "$BACKEND" == "gworkspace" ) ]]; then
-  log "USE_SERVICE_VERSIONING=true: rclone copy を使用（Drive側のバージョン履歴を保持）"
-  RCLONE_CMD="copy"
-else
-  log "rclone sync を使用（ローカルとクラウドを同期）"
-  RCLONE_CMD="sync"
-  RCLONE_EXTRA_OPTS+=("--delete-before")
-fi
-
-rclone "${RCLONE_CMD}" "${LOCAL_DIR}" "${REMOTE_PATH}" \
-  "${RCLONE_EXTRA_OPTS[@]}" \
-  --transfers 4 \
-  --checkers 8 \
-  --retries 3 \
-  --low-level-retries 10 \
-  --stats 0 \
-  --log-file "${LOG_DIR}/rclone.log" \
-  --log-level INFO
+aws s3 sync "${LOCAL_DIR}" "${REMOTE_PATH}" \
+  "${S3_OPTS[@]}" \
+  --delete \
+  >> "${LOG_DIR}/sync.log" 2>&1
 
 # ---- 結果確認 ----
-REMOTE_COUNT=$(rclone ls "${REMOTE_PATH}" 2>/dev/null | wc -l || echo "0")
-REMOTE_SIZE=$(rclone size "${REMOTE_PATH}" 2>/dev/null \
-  | grep "Total size:" | awk '{print $3, $4}' 2>/dev/null || echo "不明")
+# aws s3 ls で確認
+REMOTE_COUNT=$(aws s3 ls "${REMOTE_PATH}/" "${S3_OPTS[@]}" --recursive 2>/dev/null | grep ".gz$" | wc -l || echo "0")
+REMOTE_SIZE=$(aws s3 ls "${REMOTE_PATH}/" "${S3_OPTS[@]}" --recursive --human-readable --summarize 2>/dev/null \
+  | grep "Total Size:" | cut -d: -f2- | sed 's/^[[:space:]]*//' || echo "不明")
 
 log "同期完了: リモートファイル数 ${REMOTE_COUNT}, 合計サイズ ${REMOTE_SIZE}"
 # 成功時の通知は任意。通常は静かに。

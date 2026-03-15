@@ -28,7 +28,6 @@ usage() {
   - 対象ごとに個別のtar.gzファイルを作成
   - vendor/ や キャッシュ類は除外
   - KEEP_GENERATIONS 世代を超えた古いファイルを削除
-  - USE_SERVICE_VERSIONING=true の場合（gdrive/gworkspace）: 世代削除をスキップ
 
 例:
   $(basename "$0")
@@ -115,18 +114,12 @@ backup_target() {
   fi
 
   # 世代管理
-  local use_svc_ver="${USE_SERVICE_VERSIONING:-false}"
-  local backend="${STORAGE_BACKEND:-local}"
-  if [[ "$use_svc_ver" == "true" && ( "$backend" == "gdrive" || "$backend" == "gworkspace" ) ]]; then
-    log "  USE_SERVICE_VERSIONING=true: 世代削除をスキップ（Drive側のバージョン履歴を使用）"
-  else
-    ls -t "${BACKUP_DIR}/${SERVICE_NAME:-$ENVIRONMENT}_${ENVIRONMENT}_${type}_"*.tar.gz 2>/dev/null \
-      | tail -n "+$((KEEP_GENERATIONS + 1))" \
-      | while read -r old_file; do
-          log "  削除: $(basename "$old_file")"
-          rm -f "$old_file"
-        done
-  fi
+  ls -t "${BACKUP_DIR}/${SERVICE_NAME:-$ENVIRONMENT}_${ENVIRONMENT}_${type}_"*.tar.gz 2>/dev/null \
+    | tail -n "+$((KEEP_GENERATIONS + 1))" \
+    | while read -r old_file; do
+        log "  削除: $(basename "$old_file")"
+        rm -f "$old_file"
+      done
 }
 
 # ---- メイン ----
